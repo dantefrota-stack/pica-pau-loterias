@@ -61,10 +61,12 @@
         // --- HELPER FUNCIONS ---
         const generateId = () => Date.now().toString(36) + Math.random().toString(36).substring(2);
 
+        // Lógica atualizada com a Senha Mestra "Dante1969"
         const isUserAdmin = (bolao, user) => {
             if (!bolao) return false;
             if (user && bolao.adminId === user.uid) return true;
-            if (bolao.pin && localStorage.getItem(`admin_${bolao.id}`) === bolao.pin) return true;
+            const savedPin = localStorage.getItem(`admin_${bolao.id}`);
+            if (savedPin && (savedPin === bolao.pin || savedPin === "Dante1969")) return true;
             return false;
         };
 
@@ -138,6 +140,19 @@
                 return () => unsubscribeDb();
             }, [user]);
 
+            // Sistema de Link Único: Carrega o bolão se houver ?id= na URL
+            useEffect(() => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const idFromUrl = urlParams.get('id');
+                if (idFromUrl && boloes.length > 0 && !currentBolaoId) {
+                    const found = boloes.find(b => b.id === idFromUrl);
+                    if (found) {
+                        setCurrentBolaoId(idFromUrl);
+                        setView('bolao');
+                    }
+                }
+            }, [boloes, currentBolaoId]);
+
             const showToast = (message, type = 'success') => {
                 setToast({ message, type });
                 setTimeout(() => setToast(null), 4000);
@@ -157,15 +172,20 @@
             };
 
             const deleteBolao = async (id) => {
-                if (!window.confirm("Tem certeza que deseja excluir este bolão?")) return;
                 try {
                     await db.collection(BOLOES_COLLECTION).doc(id).delete();
-                    setView('dashboard');
+                    goHome();
                     showToast("Bolão excluído!");
                 } catch (error) {
                     console.error("Delete error:", error);
                     showToast("Erro ao excluir.", "error");
                 }
+            };
+
+            const goHome = () => {
+                setView('dashboard');
+                setCurrentBolaoId(null);
+                window.history.pushState({}, '', window.location.pathname); // Limpa a URL
             };
 
             if (loading) {
@@ -179,23 +199,6 @@
             const currentBolao = boloes.find(b => b.id === currentBolaoId);
             const isAdmin = isUserAdmin(currentBolao, user);
 
-            const claimAdminAccess = (bolao) => {
-                if (!bolao.pin) {
-                    alert("Este bolão é antigo e não possui uma Senha. Por favor, crie um NOVO BOLÃO para testar a função de senha.");
-                    return;
-                }
-                const inputPin = window.prompt("Digite a Senha de Segurança (PIN) que você criou para este bolão:");
-                if (!inputPin) return;
-                
-                if (inputPin === bolao.pin) {
-                    localStorage.setItem(`admin_${bolao.id}`, bolao.pin);
-                    setForceRender(prev => prev + 1);
-                    showToast("Acesso de Administrador recuperado com sucesso!");
-                } else {
-                    showToast("Senha incorreta.", "error");
-                }
-            };
-
             return (
                 <div>
                     {toast && (
@@ -206,9 +209,9 @@
 
                     <header className="bg-gradient-to-r from-emerald-700 to-green-600 text-white shadow-md no-print">
                         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-                            <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('dashboard')}>
-                                <div className="bg-white p-2 rounded-full">
-                                    <img src="https://api.iconify.design/noto:bird.svg" alt="Pica Pau Logo" className="w-8 h-8" />
+                            <div className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
+                                <div className="bg-white p-2 rounded-full flex items-center justify-center">
+                                    <img src="https://api.iconify.design/fluent-emoji:woodpecker.svg" alt="Pica Pau Logo" className="w-8 h-8" />
                                 </div>
                                 <div>
                                     <h1 className="text-2xl font-black tracking-tight leading-none">PICA PAU</h1>
@@ -228,10 +231,10 @@
                             <Dashboard boloes={boloes} setView={setView} setCurrentBolaoId={setCurrentBolaoId} user={user} isUserAdmin={isUserAdmin} />
                         )}
                         {view === 'create' && (
-                            <CreateBolao user={user} saveBolao={saveBolao} setView={setView} setCurrentBolaoId={setCurrentBolaoId} />
+                            <CreateBolao user={user} saveBolao={saveBolao} goHome={goHome} setCurrentBolaoId={setCurrentBolaoId} setView={setView} />
                         )}
                         {view === 'bolao' && currentBolao && (
-                            <BolaoManager bolao={currentBolao} isAdmin={isAdmin} saveBolao={saveBolao} deleteBolao={deleteBolao} activeTab={activeTab} setActiveTab={setActiveTab} setView={setView} showToast={showToast} claimAdminAccess={claimAdminAccess} />
+                            <BolaoManager bolao={currentBolao} isAdmin={isAdmin} saveBolao={saveBolao} deleteBolao={deleteBolao} activeTab={activeTab} setActiveTab={setActiveTab} goHome={goHome} showToast={showToast} setForceRender={setForceRender} />
                         )}
                     </main>
                 </div>
@@ -247,6 +250,7 @@
             const openBolao = (id) => {
                 setCurrentBolaoId(id);
                 setView('bolao');
+                window.history.pushState({}, '', `?id=${id}`); // Adiciona ID na URL
             };
 
             const BolaoCard = ({ bolao, isMine }) => {
@@ -308,7 +312,7 @@
             );
         }
 
-        function CreateBolao({ user, saveBolao, setView, setCurrentBolaoId }) {
+        function CreateBolao({ user, saveBolao, goHome, setCurrentBolaoId, setView }) {
             const [formData, setFormData] = useState({ name: '', quotaValue: 50, pixKey: '', pin: '' });
 
             const handleSubmit = (e) => {
@@ -332,12 +336,13 @@
                 saveBolao(newBolao);
                 setCurrentBolaoId(newBolao.id);
                 setView('bolao');
+                window.history.pushState({}, '', `?id=${newBolao.id}`);
             };
 
             return (
                 <div className="max-w-xl mx-auto bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
                     <div className="flex items-center gap-4 mb-6">
-                        <button onClick={() => setView('dashboard')} className="text-gray-400 hover:text-gray-600">
+                        <button onClick={goHome} className="text-gray-400 hover:text-gray-600">
                             <i className="ph ph-arrow-left text-2xl"></i>
                         </button>
                         <h2 className="text-2xl font-bold text-gray-800">Criar Novo Bolão</h2>
@@ -355,7 +360,7 @@
                             </div>
                             <div>
                                 <label className="block text-sm font-semibold text-gray-700 mb-1 flex items-center gap-1"><i className="ph ph-lock"></i> Senha do Bolão</label>
-                                <input type="text" required maxLength="8" className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-emerald-500 outline-none font-mono" placeholder="Ex: 1234" value={formData.pin} onChange={e => setFormData({...formData, pin: e.target.value})} />
+                                <input type="text" required maxLength="10" className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-emerald-500 outline-none font-mono" placeholder="Ex: 1234" value={formData.pin} onChange={e => setFormData({...formData, pin: e.target.value})} />
                             </div>
                         </div>
                         <p className="text-xs text-emerald-600 bg-emerald-50 p-2 rounded border border-emerald-100">
@@ -371,15 +376,41 @@
             );
         }
 
-        function BolaoManager({ bolao, isAdmin, saveBolao, deleteBolao, activeTab, setActiveTab, setView, showToast, claimAdminAccess }) {
-            const handleShare = () => {
+        function BolaoManager({ bolao, isAdmin, saveBolao, deleteBolao, activeTab, setActiveTab, goHome, showToast, setForceRender }) {
+            const [showPinInput, setShowPinInput] = useState(false);
+            const [pinInput, setPinInput] = useState('');
+            const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+            const getShareUrl = () => `${window.location.origin}${window.location.pathname}?id=${bolao.id}`;
+
+            const handleCopyLink = () => {
                 const dummyInput = document.createElement("input");
                 document.body.appendChild(dummyInput);
-                dummyInput.setAttribute("value", window.location.href);
+                dummyInput.setAttribute("value", getShareUrl());
                 dummyInput.select();
                 document.execCommand("copy");
                 document.body.removeChild(dummyInput);
-                showToast("Link copiado! Compartilhe com a galera no WhatsApp.");
+                showToast("Link do bolão copiado com sucesso!");
+            };
+
+            const handleShareWA = () => {
+                const text = `🎯 Venha participar do nosso bolão *${bolao.name}*!\nAcompanhe os nossos cartões, os pagamentos e o resultado do sorteio em tempo real acessando o link abaixo:\n\n${getShareUrl()}`;
+                window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+            };
+
+            const handleClaimAdmin = () => {
+                if (!bolao.pin) {
+                    showToast("Este bolão antigo não possui Senha.", "error");
+                    return;
+                }
+                if (pinInput === bolao.pin || pinInput === "Dante1969") {
+                    localStorage.setItem(`admin_${bolao.id}`, bolao.pin || "Dante1969");
+                    setForceRender(prev => prev + 1);
+                    showToast("Acesso de Administrador recuperado com sucesso!");
+                    setShowPinInput(false);
+                } else {
+                    showToast("Senha incorreta.", "error");
+                }
             };
 
             const participants = bolao.participants || [];
@@ -407,31 +438,54 @@
                             <div className="flex justify-between items-start relative z-10 flex-col md:flex-row gap-4">
                                 <div>
                                     <div className="flex items-center gap-3 mb-2">
-                                        <button onClick={() => setView('dashboard')} className="text-emerald-200 hover:text-white transition-colors">
+                                        <button onClick={goHome} className="text-emerald-200 hover:text-white transition-colors">
                                             <i className="ph ph-arrow-left text-xl"></i>
                                         </button>
                                         <h2 className="text-3xl font-black">{bolao.name || 'Sem Nome'}</h2>
                                     </div>
-                                    <div className="flex gap-4 text-emerald-100 text-sm mt-4 flex-wrap">
+                                    <div className="flex gap-4 text-emerald-100 text-sm mt-4 flex-wrap items-center">
                                         <div className="flex items-center gap-1"><i className="ph ph-users"></i> {participants.length} Participantes</div>
                                         <div className="flex items-center gap-1"><i className="ph ph-currency-dollar"></i> Cota Base: R$ {bolao.quotaValue?.toFixed(2)}</div>
+                                        
                                         {isAdmin ? (
-                                            <div className="flex items-center gap-1 font-semibold text-yellow-300"><i className="ph-fill ph-check-circle"></i> Você é o Admin</div>
+                                            <div className="flex items-center gap-1 font-semibold text-yellow-300 bg-emerald-900/50 px-2 py-1 rounded"><i className="ph-fill ph-check-circle"></i> Você é o Admin</div>
                                         ) : (
-                                            <button onClick={() => claimAdminAccess(bolao)} className="flex items-center gap-1 font-semibold text-white bg-emerald-600/50 hover:bg-emerald-600 px-3 py-1 rounded-full border border-emerald-400">
-                                                <i className="ph ph-lock"></i> Recuperar Admin
-                                            </button>
+                                            <div className="flex items-center gap-2">
+                                                {!showPinInput ? (
+                                                    <button onClick={() => setShowPinInput(true)} className="flex items-center gap-1 font-semibold text-white bg-emerald-600 hover:bg-emerald-500 px-3 py-1 rounded-full border border-emerald-400 transition-colors">
+                                                        <i className="ph ph-lock"></i> Recuperar Admin
+                                                    </button>
+                                                ) : (
+                                                    <div className="flex items-center gap-1 bg-emerald-900 p-1 rounded-lg">
+                                                        <input type="password" value={pinInput} onChange={e=>setPinInput(e.target.value)} placeholder="Senha..." className="w-24 px-2 py-1 text-gray-900 rounded text-sm outline-none" />
+                                                        <button onClick={handleClaimAdmin} className="bg-emerald-500 hover:bg-emerald-400 text-white px-2 py-1 rounded text-sm font-bold">OK</button>
+                                                        <button onClick={() => setShowPinInput(false)} className="text-gray-300 hover:text-white px-2"><i className="ph ph-x"></i></button>
+                                                    </div>
+                                                )}
+                                            </div>
                                         )}
                                     </div>
                                 </div>
-                                <div className="flex gap-2">
-                                    <button onClick={handleShare} className="bg-emerald-700 hover:bg-emerald-600 px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 border border-emerald-500">
-                                        <i className="ph ph-share-network text-lg"></i> Compartilhar Link
+                                <div className="flex gap-2 flex-wrap">
+                                    <button onClick={handleShareWA} className="bg-[#25D366] hover:bg-[#20bd5a] text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 shadow-sm transition-colors">
+                                        <i className="ph ph-whatsapp-logo text-lg"></i> Convidar Grupo
                                     </button>
+                                    <button onClick={handleCopyLink} className="bg-emerald-700 hover:bg-emerald-600 px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 border border-emerald-500 transition-colors">
+                                        <i className="ph ph-link text-lg"></i> Copiar Link
+                                    </button>
+                                    
                                     {isAdmin && (
-                                        <button onClick={() => deleteBolao(bolao.id)} className="bg-red-500/20 hover:bg-red-500/40 text-red-200 px-4 py-2 rounded-lg border border-red-500/30">
-                                            <i className="ph ph-trash text-lg"></i>
-                                        </button>
+                                        showDeleteConfirm ? (
+                                            <div className="flex items-center gap-1 bg-red-100 p-1 rounded-lg border border-red-200">
+                                                <span className="text-red-800 text-xs font-bold px-2">Apagar?</span>
+                                                <button onClick={() => deleteBolao(bolao.id)} className="bg-red-600 text-white px-2 py-1 rounded text-xs font-bold">Sim</button>
+                                                <button onClick={() => setShowDeleteConfirm(false)} className="bg-gray-300 text-gray-800 px-2 py-1 rounded text-xs font-bold">Não</button>
+                                            </div>
+                                        ) : (
+                                            <button onClick={() => setShowDeleteConfirm(true)} className="bg-red-500/20 hover:bg-red-500/40 text-red-200 px-4 py-2 rounded-lg border border-red-500/30 transition-colors">
+                                                <i className="ph ph-trash text-lg"></i>
+                                            </button>
+                                        )
                                     )}
                                 </div>
                             </div>
@@ -492,8 +546,18 @@
             };
 
             const removeParticipant = (id) => {
-                if (!isAdmin || !window.confirm("Remover participante?")) return;
                 saveBolao({ ...bolao, participants: participants.filter(p => p.id !== id) });
+            };
+
+            const sendWhatsApp = (participant) => {
+                const shareUrl = `${window.location.origin}${window.location.pathname}?id=${bolao.id}`;
+                let text = "";
+                if (participant.paid) {
+                    text = `✅ Olá ${participant.name}! O seu pagamento da cota do bolão *${bolao.name}* já foi confirmado!\n\nOs nossos jogos já estão a ser preparados. Acompanhe os cartões gerados e o resultado do sorteio em tempo real através deste link oficial:\n${shareUrl}`;
+                } else {
+                    text = `⏳ Olá ${participant.name}! Falta pouco para fecharmos o bolão *${bolao.name}*.\n\nO valor da sua cota é de R$ ${bolao.quotaValue.toFixed(2)}.\n🔑 Chave PIX: ${bolao.pixKey || 'Solicite a chave ao admin'}\n\nAssim que fizer o pagamento, o seu nome ficará verde na nossa lista oficial:\n${shareUrl}`;
+                }
+                window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
             };
 
             return (
@@ -520,7 +584,14 @@
                                             <p className="text-xs text-gray-500">{p.paid ? 'Pago' : 'Pendente'}</p>
                                         </div>
                                     </div>
-                                    {isAdmin && <button onClick={() => removeParticipant(p.id)} className="text-gray-400 hover:text-red-500"><i className="ph ph-trash text-lg"></i></button>}
+                                    {isAdmin && (
+                                        <div className="flex items-center gap-2">
+                                            <button onClick={() => sendWhatsApp(p)} title={p.paid ? "Enviar Confirmação" : "Cobrar no WhatsApp"} className={`p-2 rounded-lg transition-colors ${p.paid ? 'bg-[#25D366]/20 text-[#128C7E] hover:bg-[#25D366]/40' : 'bg-gray-100 text-gray-500 hover:bg-[#25D366]/20 hover:text-[#128C7E]'}`}>
+                                                <i className="ph ph-whatsapp-logo text-lg"></i>
+                                            </button>
+                                            <button onClick={() => removeParticipant(p.id)} className="text-gray-400 hover:text-red-500 p-2"><i className="ph ph-trash text-lg"></i></button>
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -532,6 +603,7 @@
         function GeneratorTab({ bolao, saveBolao, setActiveTab }) {
             const [config, setConfig] = useState({ quantidade: 1, dezenas: 6, maxConsecutive: 3, maxPerDezena: 3 });
             const [isGenerating, setIsGenerating] = useState(false);
+            const [activeInfo, setActiveInfo] = useState(null); 
 
             const costPerTicket = getCombinations(config.dezenas) * TICKET_COST;
             const totalCost = config.quantidade * costPerTicket;
@@ -584,14 +656,64 @@
                 }, 500);
             };
 
+            const toggleInfo = (id) => setActiveInfo(activeInfo === id ? null : id);
+
             return (
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                    <div className="mb-6 border-b border-gray-100 pb-4">
+                        <h3 className="text-xl font-bold text-gray-800">Parâmetros do Gerador (Surpresinha Inteligente)</h3>
+                        <p className="text-gray-500 text-sm mt-1">Configure as regras e clique no <i className="ph-fill ph-info text-emerald-600"></i> para tirar dúvidas.</p>
+                    </div>
+                    
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         <div className="space-y-6">
-                            <div><label className="flex justify-between text-sm font-semibold mb-2"><span>Quantidade</span><span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded">{config.quantidade}</span></label><input type="range" min="1" max="100" value={config.quantidade} onChange={e => setConfig({...config, quantidade: Number(e.target.value)})} className="w-full accent-emerald-600" /></div>
-                            <div><label className="flex justify-between text-sm font-semibold mb-2"><span>Dezenas por Cartão</span><span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded">{config.dezenas}</span></label><input type="range" min="6" max="20" value={config.dezenas} onChange={e => setConfig({...config, dezenas: Number(e.target.value)})} className="w-full accent-emerald-600" /></div>
-                            <div><label className="flex justify-between text-sm font-semibold mb-2"><span>Máx Consecutivos</span><span className="bg-gray-100 px-2 py-1 rounded">{config.maxConsecutive}</span></label><input type="range" min="2" max="15" value={config.maxConsecutive} onChange={e => setConfig({...config, maxConsecutive: Number(e.target.value)})} className="w-full accent-emerald-600" /></div>
-                            <div><label className="flex justify-between text-sm font-semibold mb-2"><span>Máx Mesma Linha</span><span className="bg-gray-100 px-2 py-1 rounded">{config.maxPerDezena}</span></label><input type="range" min="2" max="10" value={config.maxPerDezena} onChange={e => setConfig({...config, maxPerDezena: Number(e.target.value)})} className="w-full accent-emerald-600" /></div>
+                            <div>
+                                <label className="flex justify-between text-sm font-semibold mb-2 items-center">
+                                    <span className="flex items-center gap-2">
+                                        Quantidade de Cartões
+                                        <i className="ph-fill ph-info text-emerald-600 cursor-pointer text-lg hover:text-emerald-700 transition-colors" onClick={() => toggleInfo('qtd')}></i>
+                                    </span>
+                                    <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded">{config.quantidade}</span>
+                                </label>
+                                {activeInfo === 'qtd' && <div className="text-xs text-gray-600 bg-emerald-50 p-3 rounded-lg mb-3 border border-emerald-100">Define quantos bilhetes diferentes o sistema vai gerar automaticamente.</div>}
+                                <input type="range" min="1" max="100" value={config.quantidade} onChange={e => setConfig({...config, quantidade: Number(e.target.value)})} className="w-full accent-emerald-600" />
+                            </div>
+
+                            <div>
+                                <label className="flex justify-between text-sm font-semibold mb-2 items-center">
+                                    <span className="flex items-center gap-2">
+                                        Dezenas por Cartão
+                                        <i className="ph-fill ph-info text-emerald-600 cursor-pointer text-lg hover:text-emerald-700 transition-colors" onClick={() => toggleInfo('dezenas')}></i>
+                                    </span>
+                                    <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded">{config.dezenas}</span>
+                                </label>
+                                {activeInfo === 'dezenas' && <div className="text-xs text-gray-600 bg-emerald-50 p-3 rounded-lg mb-3 border border-emerald-100">A aposta padrão da Mega-Sena tem 6 números. Pode escolher até 20. <strong>Atenção:</strong> Adicionar mais números aumenta drasticamente o valor cobrado pela Caixa!</div>}
+                                <input type="range" min="6" max="20" value={config.dezenas} onChange={e => setConfig({...config, dezenas: Number(e.target.value)})} className="w-full accent-emerald-600" />
+                            </div>
+
+                            <div>
+                                <label className="flex justify-between text-sm font-semibold mb-2 items-center">
+                                    <span className="flex items-center gap-2">
+                                        Máx. Números Consecutivos
+                                        <i className="ph-fill ph-info text-emerald-600 cursor-pointer text-lg hover:text-emerald-700 transition-colors" onClick={() => toggleInfo('consecutivos')}></i>
+                                    </span>
+                                    <span className="bg-gray-100 px-2 py-1 rounded">{config.maxConsecutive}</span>
+                                </label>
+                                {activeInfo === 'consecutivos' && <div className="text-xs text-gray-600 bg-emerald-50 p-3 rounded-lg mb-3 border border-emerald-100">Evita sequências raras no sorteio. Se o limite for 2, o sistema <strong>nunca</strong> vai gerar "10, 11, 12" juntos.</div>}
+                                <input type="range" min="2" max="15" value={config.maxConsecutive} onChange={e => setConfig({...config, maxConsecutive: Number(e.target.value)})} className="w-full accent-emerald-600" />
+                            </div>
+
+                            <div>
+                                <label className="flex justify-between text-sm font-semibold mb-2 items-center">
+                                    <span className="flex items-center gap-2">
+                                        Máximo na Mesma Dezena
+                                        <i className="ph-fill ph-info text-emerald-600 cursor-pointer text-lg hover:text-emerald-700 transition-colors" onClick={() => toggleInfo('dezena')}></i>
+                                    </span>
+                                    <span className="bg-gray-100 px-2 py-1 rounded">{config.maxPerDezena}</span>
+                                </label>
+                                {activeInfo === 'dezena' && <div className="text-xs text-gray-600 bg-emerald-50 p-3 rounded-lg mb-3 border border-emerald-100">Controla quantos números podem sair na mesma casa decimal (ex: 21, 22, 23...). Se o limite for 3, impede combinações como "21, 25, 26, 29" no mesmo bilhete.</div>}
+                                <input type="range" min="2" max="10" value={config.maxPerDezena} onChange={e => setConfig({...config, maxPerDezena: Number(e.target.value)})} className="w-full accent-emerald-600" />
+                            </div>
                         </div>
                         <div className="bg-gray-50 p-6 rounded-xl border border-gray-200 flex flex-col justify-between">
                             <div>
@@ -619,13 +741,9 @@
         }
 
         function TicketsTab({ bolao, isAdmin, saveBolao }) {
+            const [confirmClear, setConfirmClear] = useState(false);
             const tickets = bolao.tickets || [];
             const drawn = bolao.drawnNumbers || [];
-
-            const clearTickets = () => {
-                if (!window.confirm("Apagar TODOS os cartões gerados?")) return;
-                saveBolao({ ...bolao, tickets: [] });
-            };
 
             const totalCost = tickets.reduce((acc, t) => acc + (getCombinations(t.dezenas?.length || 6) * TICKET_COST), 0);
 
@@ -637,8 +755,20 @@
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
                     <div className="flex flex-col sm:flex-row justify-between items-center mb-6 no-print gap-4">
                         <div><h3 className="text-xl font-bold">Cartões do Bolão</h3><p className="text-sm text-gray-500">{tickets.length} bilhetes (Custo: R$ {totalCost.toFixed(2)})</p></div>
-                        <div className="flex gap-2">
-                            {isAdmin && <button onClick={clearTickets} className="text-gray-500 hover:text-red-500 px-4 py-2 rounded-lg border">Apagar Tudo</button>}
+                        <div className="flex gap-2 items-center flex-wrap">
+                            {isAdmin && (
+                                confirmClear ? (
+                                    <div className="flex items-center gap-2 bg-red-50 p-1 rounded-lg border border-red-200 mr-2">
+                                        <span className="text-red-700 text-xs font-bold px-2">Apagar TODOS os {tickets.length} jogos?</span>
+                                        <button onClick={() => {saveBolao({ ...bolao, tickets: [] }); setConfirmClear(false)}} className="bg-red-500 text-white px-3 py-1 rounded text-sm font-bold">Sim</button>
+                                        <button onClick={() => setConfirmClear(false)} className="bg-gray-200 text-gray-700 px-3 py-1 rounded text-sm font-bold">Não</button>
+                                    </div>
+                                ) : (
+                                    <button onClick={() => setConfirmClear(true)} className="text-gray-500 hover:text-red-500 px-4 py-2 rounded-lg border border-gray-200 hover:border-red-200 transition-colors mr-2">
+                                        Apagar Tudo
+                                    </button>
+                                )
+                            )}
                             <button onClick={() => window.print()} className="bg-gray-800 text-white px-6 py-2 rounded-lg font-semibold flex items-center gap-2"><i className="ph ph-printer text-lg"></i> Imprimir</button>
                         </div>
                     </div>
@@ -710,8 +840,8 @@
                                 <label className="block text-sm font-bold text-gray-700 mb-2">Números Sorteados</label>
                                 <input type="text" value={inputStr} onChange={(e) => setInputStr(e.target.value)} placeholder="Ex: 05 - 12 - 33 - 41 - 50 - 59" className="w-full px-4 py-3 rounded-lg border font-mono text-center text-lg outline-none" />
                                 <div className="flex gap-2 mt-4">
-                                    <button onClick={handleSaveResult} className="flex-1 bg-emerald-600 text-white py-3 rounded-lg font-bold">Conferir Jogos</button>
-                                    {drawnNumbers.length > 0 && <button onClick={() => {saveBolao({...bolao, drawnNumbers:[]}); setInputStr('')}} className="px-6 bg-gray-200 py-3 rounded-lg font-bold">Limpar</button>}
+                                    <button onClick={handleSaveResult} className="flex-1 bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 transition-colors">Conferir Jogos</button>
+                                    {drawnNumbers.length > 0 && <button onClick={() => {saveBolao({...bolao, drawnNumbers:[]}); setInputStr('')}} className="px-6 bg-gray-200 hover:bg-gray-300 py-3 rounded-lg font-bold transition-colors">Limpar</button>}
                                 </div>
                             </div>
                         ) : drawnNumbers.length > 0 ? (
