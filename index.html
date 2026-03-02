@@ -1,14 +1,748 @@
 <!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + React + TS</title>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PICA PAU - Loterias e Bolões</title>
+    
+    <!-- Tailwind CSS (Design) -->
     <script src="https://cdn.tailwindcss.com"></script>
-  </head>
-  <body>
+    
+    <!-- Ícones (Phosphor Icons) -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel (Para compilar o código React no navegador) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Firebase (Versão Compatível para HTML) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        @media print {
+            body { background: white; }
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            .ticket-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+            .ticket-card { break-inside: avoid; page-break-inside: avoid; border: 1px solid #ccc; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 selection:bg-emerald-200">
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- FIREBASE INITIALIZATION ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyD8jpjyFQUgfzFJcn6ckKibAHzUNmSIGUc",
+            authDomain: "d2-group-system.firebaseapp.com",
+            projectId: "d2-group-system",
+            storageBucket: "d2-group-system.firebasestorage.app",
+            messagingSenderId: "481760052668",
+            appId: "1:481760052668:web:4ea2a6222ebd500ea297b9",
+            measurementId: "G-GB9ZXL62LK"
+        };
+        
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const BOLOES_COLLECTION = 'boloes';
+
+        // --- HELPER FUNCIONS ---
+        const generateId = () => Date.now().toString(36) + Math.random().toString(36).substring(2);
+
+        const isUserAdmin = (bolao, user) => {
+            if (!bolao) return false;
+            if (user && bolao.adminId === user.uid) return true;
+            if (bolao.pin && localStorage.getItem(`admin_${bolao.id}`) === bolao.pin) return true;
+            return false;
+        };
+
+        // --- LOTTERY MATH ---
+        const TICKET_COST = 6.00; 
+
+        const getCombinations = (n) => {
+            if (!n || n < 6) return 0;
+            if (n === 6) return 1;
+            let c = 1;
+            for (let i = 1; i <= 6; i++) {
+                c = c * (n - i + 1) / i;
+            }
+            return c;
+        };
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [boloes, setBoloes] = useState([]);
+            const [currentBolaoId, setCurrentBolaoId] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [toast, setToast] = useState(null);
+            const [forceRender, setForceRender] = useState(0);
+
+            const [view, setView] = useState('dashboard');
+            const [activeTab, setActiveTab] = useState('participants');
+
+            useEffect(() => {
+                auth.signInAnonymously().catch(error => {
+                    console.error("Auth error:", error);
+                    showToast("Erro na autenticação.", "error");
+                });
+
+                const unsubscribeAuth = auth.onAuthStateChanged((u) => {
+                    setUser(u);
+                    setLoading(false);
+                });
+
+                return () => unsubscribeAuth();
+            }, []);
+
+            useEffect(() => {
+                if (!user) return;
+                
+                const unsubscribeDb = db.collection(BOLOES_COLLECTION).onSnapshot((snapshot) => {
+                    const data = snapshot.docs.map(doc => {
+                        const docData = doc.data();
+                        
+                        let parsedTickets = [];
+                        if (docData.ticketsStr) {
+                            try { parsedTickets = JSON.parse(docData.ticketsStr); } catch(e) {}
+                        } else if (Array.isArray(docData.tickets)) {
+                            parsedTickets = docData.tickets;
+                        }
+                        
+                        docData.tickets = parsedTickets.map(t => {
+                            if (Array.isArray(t)) return { id: generateId(), dezenas: t };
+                            return t;
+                        });
+
+                        return { id: doc.id, ...docData };
+                    });
+                    
+                    data.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                    setBoloes(data);
+                }, (error) => {
+                    console.error("Firestore error:", error);
+                    showToast("Erro ao carregar os bolões.", "error");
+                });
+
+                return () => unsubscribeDb();
+            }, [user]);
+
+            const showToast = (message, type = 'success') => {
+                setToast({ message, type });
+                setTimeout(() => setToast(null), 4000);
+            };
+
+            const saveBolao = async (bolaoData) => {
+                try {
+                    const dataToSave = { ...bolaoData };
+                    delete dataToSave.ticketsStr; 
+                    
+                    await db.collection(BOLOES_COLLECTION).doc(bolaoData.id).set(dataToSave);
+                    showToast("Operação salva com sucesso!");
+                } catch (error) {
+                    console.error("Save error:", error);
+                    showToast(`Falha no sistema: ${error.message}`, "error");
+                }
+            };
+
+            const deleteBolao = async (id) => {
+                if (!window.confirm("Tem certeza que deseja excluir este bolão?")) return;
+                try {
+                    await db.collection(BOLOES_COLLECTION).doc(id).delete();
+                    setView('dashboard');
+                    showToast("Bolão excluído!");
+                } catch (error) {
+                    console.error("Delete error:", error);
+                    showToast("Erro ao excluir.", "error");
+                }
+            };
+
+            if (loading) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-emerald-50 text-emerald-800">
+                        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-600"></div>
+                    </div>
+                );
+            }
+
+            const currentBolao = boloes.find(b => b.id === currentBolaoId);
+            const isAdmin = isUserAdmin(currentBolao, user);
+
+            const claimAdminAccess = (bolao) => {
+                if (!bolao.pin) {
+                    alert("Este bolão é antigo e não possui uma Senha. Por favor, crie um NOVO BOLÃO para testar a função de senha.");
+                    return;
+                }
+                const inputPin = window.prompt("Digite a Senha de Segurança (PIN) que você criou para este bolão:");
+                if (!inputPin) return;
+                
+                if (inputPin === bolao.pin) {
+                    localStorage.setItem(`admin_${bolao.id}`, bolao.pin);
+                    setForceRender(prev => prev + 1);
+                    showToast("Acesso de Administrador recuperado com sucesso!");
+                } else {
+                    showToast("Senha incorreta.", "error");
+                }
+            };
+
+            return (
+                <div>
+                    {toast && (
+                        <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg text-white no-print transition-all duration-300 ${toast.type === 'error' ? 'bg-red-500' : 'bg-emerald-600'}`}>
+                            {toast.message}
+                        </div>
+                    )}
+
+                    <header className="bg-gradient-to-r from-emerald-700 to-green-600 text-white shadow-md no-print">
+                        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+                            <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('dashboard')}>
+                                <div className="bg-white p-2 rounded-full">
+                                    <img src="https://api.iconify.design/noto:bird.svg" alt="Pica Pau Logo" className="w-8 h-8" />
+                                </div>
+                                <div>
+                                    <h1 className="text-2xl font-black tracking-tight leading-none">PICA PAU</h1>
+                                    <span className="text-emerald-200 text-xs font-semibold uppercase tracking-wider">Loterias & Bolões</span>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-4 text-sm">
+                                <span className="hidden sm:inline-block opacity-80">
+                                    {user ? `Dispositivo Autenticado` : 'Conectando...'}
+                                </span>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="max-w-6xl mx-auto px-4 py-8">
+                        {view === 'dashboard' && (
+                            <Dashboard boloes={boloes} setView={setView} setCurrentBolaoId={setCurrentBolaoId} user={user} isUserAdmin={isUserAdmin} />
+                        )}
+                        {view === 'create' && (
+                            <CreateBolao user={user} saveBolao={saveBolao} setView={setView} setCurrentBolaoId={setCurrentBolaoId} />
+                        )}
+                        {view === 'bolao' && currentBolao && (
+                            <BolaoManager bolao={currentBolao} isAdmin={isAdmin} saveBolao={saveBolao} deleteBolao={deleteBolao} activeTab={activeTab} setActiveTab={setActiveTab} setView={setView} showToast={showToast} claimAdminAccess={claimAdminAccess} />
+                        )}
+                    </main>
+                </div>
+            );
+        }
+
+        // --- COMPONENTS ---
+
+        function Dashboard({ boloes, setView, setCurrentBolaoId, user, isUserAdmin }) {
+            const myBoloes = boloes.filter(b => isUserAdmin(b, user));
+            const otherBoloes = boloes.filter(b => !isUserAdmin(b, user));
+
+            const openBolao = (id) => {
+                setCurrentBolaoId(id);
+                setView('bolao');
+            };
+
+            const BolaoCard = ({ bolao, isMine }) => {
+                const participants = bolao.participants || [];
+                const tickets = bolao.tickets || [];
+                const totalArrecadado = participants.filter(p => p.paid).length * (bolao.quotaValue || 0);
+                
+                return (
+                    <div onClick={() => openBolao(bolao.id)} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md hover:border-emerald-300 cursor-pointer transition-all duration-200 group relative overflow-hidden">
+                        <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500 group-hover:bg-yellow-400 transition-colors"></div>
+                        <div className="flex justify-between items-start mb-4">
+                            <h3 className="font-bold text-lg text-gray-800 line-clamp-1">{bolao.name || 'Sem Nome'}</h3>
+                            {isMine && <span className="bg-emerald-100 text-emerald-800 text-xs px-2 py-1 rounded font-semibold flex items-center gap-1"><i className="ph-fill ph-check-circle"></i> Admin</span>}
+                        </div>
+                        <div className="space-y-2 text-sm text-gray-600">
+                            <div className="flex items-center gap-2"><i className="ph ph-users text-lg text-gray-400"></i><span>{participants.length} Participantes</span></div>
+                            <div className="flex items-center gap-2"><i className="ph ph-ticket text-lg text-gray-400"></i><span>{tickets.length} Cartões Gerados</span></div>
+                            <div className="flex items-center gap-2"><i className="ph ph-currency-dollar text-lg text-emerald-500"></i><span className="font-medium text-emerald-700">R$ {totalArrecadado.toFixed(2)} arrecadados</span></div>
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="space-y-8">
+                    <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <div>
+                            <h2 className="text-3xl font-bold text-gray-800">Meus Bolões</h2>
+                            <p className="text-gray-500">Gerencie ou participe de bolões com seus amigos.</p>
+                        </div>
+                        <button onClick={() => setView('create')} className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-lg font-semibold flex items-center gap-2 shadow-sm transition-colors w-full sm:w-auto justify-center">
+                            <i className="ph ph-plus text-xl"></i> Criar Novo Bolão
+                        </button>
+                    </div>
+
+                    {myBoloes.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {myBoloes.map(b => <BolaoCard key={b.id} bolao={b} isMine={true} />)}
+                        </div>
+                    ) : (
+                        <div className="bg-white p-8 rounded-xl border border-dashed border-gray-300 text-center">
+                            <div className="bg-emerald-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <i className="ph ph-ticket text-3xl text-emerald-500"></i>
+                            </div>
+                            <h3 className="text-lg font-bold text-gray-700 mb-2">Você ainda não gerencia nenhum bolão</h3>
+                            <p className="text-gray-500 text-sm max-w-md mx-auto">Crie um novo bolão, ou clique em um bolão público abaixo e use o botão "Recuperar Admin" informando a sua senha.</p>
+                        </div>
+                    )}
+
+                    {otherBoloes.length > 0 && (
+                        <div className="pt-8 border-t border-gray-200">
+                            <h2 className="text-2xl font-bold text-gray-800 mb-6">Bolões Públicos na Plataforma</h2>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {otherBoloes.map(b => <BolaoCard key={b.id} bolao={b} isMine={false} />)}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        function CreateBolao({ user, saveBolao, setView, setCurrentBolaoId }) {
+            const [formData, setFormData] = useState({ name: '', quotaValue: 50, pixKey: '', pin: '' });
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (!formData.name.trim() || !formData.pin.trim()) return;
+
+                const newBolao = {
+                    id: generateId(),
+                    adminId: user?.uid || generateId(),
+                    name: formData.name,
+                    quotaValue: Number(formData.quotaValue),
+                    pixKey: formData.pixKey,
+                    pin: formData.pin,
+                    participants: [],
+                    tickets: [],
+                    drawnNumbers: [],
+                    createdAt: Date.now()
+                };
+
+                localStorage.setItem(`admin_${newBolao.id}`, newBolao.pin);
+                saveBolao(newBolao);
+                setCurrentBolaoId(newBolao.id);
+                setView('bolao');
+            };
+
+            return (
+                <div className="max-w-xl mx-auto bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
+                    <div className="flex items-center gap-4 mb-6">
+                        <button onClick={() => setView('dashboard')} className="text-gray-400 hover:text-gray-600">
+                            <i className="ph ph-arrow-left text-2xl"></i>
+                        </button>
+                        <h2 className="text-2xl font-bold text-gray-800">Criar Novo Bolão</h2>
+                    </div>
+
+                    <form onSubmit={handleSubmit} className="space-y-5">
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Nome do Bolão</label>
+                            <input type="text" required className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="Ex: Mega da Virada - Família Silva" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Cota por Pessoa (R$)</label>
+                                <input type="number" required min="5" step="1" className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-emerald-500 outline-none" value={formData.quotaValue} onChange={e => setFormData({...formData, quotaValue: e.target.value})} />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1 flex items-center gap-1"><i className="ph ph-lock"></i> Senha do Bolão</label>
+                                <input type="text" required maxLength="8" className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-emerald-500 outline-none font-mono" placeholder="Ex: 1234" value={formData.pin} onChange={e => setFormData({...formData, pin: e.target.value})} />
+                            </div>
+                        </div>
+                        <p className="text-xs text-emerald-600 bg-emerald-50 p-2 rounded border border-emerald-100">
+                            <strong>Importante:</strong> Crie uma senha simples acima. Se você acessar o site de outro aparelho no futuro, basta usar essa senha para recuperar os seus controles de Administrador!
+                        </p>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Sua Chave PIX (Opcional)</label>
+                            <input type="text" className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="CPF, Email, Telefone..." value={formData.pixKey} onChange={e => setFormData({...formData, pixKey: e.target.value})} />
+                        </div>
+                        <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-lg transition-colors mt-4">Criar Bolão Oficial</button>
+                    </form>
+                </div>
+            );
+        }
+
+        function BolaoManager({ bolao, isAdmin, saveBolao, deleteBolao, activeTab, setActiveTab, setView, showToast, claimAdminAccess }) {
+            const handleShare = () => {
+                const dummyInput = document.createElement("input");
+                document.body.appendChild(dummyInput);
+                dummyInput.setAttribute("value", window.location.href);
+                dummyInput.select();
+                document.execCommand("copy");
+                document.body.removeChild(dummyInput);
+                showToast("Link copiado! Compartilhe com a galera no WhatsApp.");
+            };
+
+            const participants = bolao.participants || [];
+            const tickets = bolao.tickets || [];
+            
+            const totalCollected = participants.filter(p => p.paid).length * (bolao.quotaValue || 0);
+            const totalTicketsCost = tickets.reduce((acc, t) => acc + (getCombinations(t.dezenas?.length || 6) * TICKET_COST), 0);
+            const remainingBudget = totalCollected - totalTicketsCost;
+            
+            const isNegative = remainingBudget < 0;
+            const totalMissing = isNegative ? Math.abs(remainingBudget) : 0;
+            const missingPerPerson = participants.length > 0 ? (totalMissing / participants.length) : 0;
+
+            const TabBtn = ({ id, icon, label }) => (
+                <button onClick={() => setActiveTab(id)} className={`flex items-center gap-2 px-6 py-4 font-semibold text-sm transition-colors border-b-2 whitespace-nowrap ${activeTab === id ? 'border-emerald-500 text-emerald-700 bg-emerald-50/50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
+                    <i className={icon + " text-lg"}></i> {label}
+                </button>
+            );
+
+            return (
+                <div className="space-y-6">
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden no-print">
+                        <div className="bg-emerald-800 text-white p-6 relative">
+                            <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none"><i className="ph-fill ph-trophy text-9xl"></i></div>
+                            <div className="flex justify-between items-start relative z-10 flex-col md:flex-row gap-4">
+                                <div>
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <button onClick={() => setView('dashboard')} className="text-emerald-200 hover:text-white transition-colors">
+                                            <i className="ph ph-arrow-left text-xl"></i>
+                                        </button>
+                                        <h2 className="text-3xl font-black">{bolao.name || 'Sem Nome'}</h2>
+                                    </div>
+                                    <div className="flex gap-4 text-emerald-100 text-sm mt-4 flex-wrap">
+                                        <div className="flex items-center gap-1"><i className="ph ph-users"></i> {participants.length} Participantes</div>
+                                        <div className="flex items-center gap-1"><i className="ph ph-currency-dollar"></i> Cota Base: R$ {bolao.quotaValue?.toFixed(2)}</div>
+                                        {isAdmin ? (
+                                            <div className="flex items-center gap-1 font-semibold text-yellow-300"><i className="ph-fill ph-check-circle"></i> Você é o Admin</div>
+                                        ) : (
+                                            <button onClick={() => claimAdminAccess(bolao)} className="flex items-center gap-1 font-semibold text-white bg-emerald-600/50 hover:bg-emerald-600 px-3 py-1 rounded-full border border-emerald-400">
+                                                <i className="ph ph-lock"></i> Recuperar Admin
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={handleShare} className="bg-emerald-700 hover:bg-emerald-600 px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 border border-emerald-500">
+                                        <i className="ph ph-share-network text-lg"></i> Compartilhar Link
+                                    </button>
+                                    {isAdmin && (
+                                        <button onClick={() => deleteBolao(bolao.id)} className="bg-red-500/20 hover:bg-red-500/40 text-red-200 px-4 py-2 rounded-lg border border-red-500/30">
+                                            <i className="ph ph-trash text-lg"></i>
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-emerald-50 p-4 border-b border-gray-200 flex flex-wrap gap-6 items-center justify-between">
+                            <div className="flex items-center gap-8 flex-wrap">
+                                <div><p className="text-xs text-emerald-600 font-bold uppercase">Arrecadado</p><p className="text-xl font-black text-gray-800">R$ {totalCollected.toFixed(2)}</p></div>
+                                <div><p className="text-xs text-emerald-600 font-bold uppercase">Custo dos Jogos</p><p className="text-xl font-black text-gray-800">R$ {totalTicketsCost.toFixed(2)}</p></div>
+                                <div><p className="text-xs text-emerald-600 font-bold uppercase">Saldo em Caixa</p><p className={`text-xl font-black ${isNegative ? 'text-red-600' : 'text-emerald-600'}`}>R$ {remainingBudget.toFixed(2)}</p></div>
+                                
+                                {isNegative && (
+                                    <div className="bg-red-100 border border-red-200 text-red-700 px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm animate-pulse">
+                                        <i className="ph-fill ph-warning-circle text-lg"></i>
+                                        <span className="font-bold text-sm">Rateio Extra: Falta R$ {missingPerPerson.toFixed(2)} por pessoa</span>
+                                    </div>
+                                )}
+                            </div>
+                            {!isAdmin && bolao.pixKey && (
+                                <div className="bg-white p-3 rounded-lg border border-emerald-200 flex items-center gap-4 shadow-sm">
+                                    <div><p className="text-xs text-gray-500 font-semibold mb-1">Chave PIX:</p><code className="text-emerald-700 font-bold bg-emerald-50 px-2 py-1 rounded select-all">{bolao.pixKey}</code></div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex overflow-x-auto border-b border-gray-200 bg-white scrollbar-hide">
+                            <TabBtn id="participants" icon="ph ph-users" label="Participantes" />
+                            <TabBtn id="tickets" icon="ph ph-ticket" label={`Cartões (${tickets.length})`} />
+                            {isAdmin && <TabBtn id="generate" icon="ph ph-gear" label="Gerador" />}
+                            <TabBtn id="results" icon="ph ph-trophy" label="Resultados" />
+                        </div>
+                    </div>
+
+                    <div className="bg-transparent">
+                        {activeTab === 'participants' && <ParticipantsTab bolao={bolao} isAdmin={isAdmin} saveBolao={saveBolao} />}
+                        {activeTab === 'generate' && isAdmin && <GeneratorTab bolao={bolao} saveBolao={saveBolao} setActiveTab={setActiveTab} />}
+                        {activeTab === 'tickets' && <TicketsTab bolao={bolao} isAdmin={isAdmin} saveBolao={saveBolao} />}
+                        {activeTab === 'results' && <ResultsTab bolao={bolao} isAdmin={isAdmin} saveBolao={saveBolao} />}
+                    </div>
+                </div>
+            );
+        }
+
+        function ParticipantsTab({ bolao, isAdmin, saveBolao }) {
+            const [newName, setNewName] = useState('');
+            const participants = bolao.participants || [];
+
+            const addParticipant = (e) => {
+                e.preventDefault();
+                if (!newName.trim()) return;
+                saveBolao({ ...bolao, participants: [...participants, { id: generateId(), name: newName.trim(), paid: false }] });
+                setNewName('');
+            };
+
+            const togglePaid = (id) => {
+                if (!isAdmin) return;
+                saveBolao({ ...bolao, participants: participants.map(p => p.id === id ? { ...p, paid: !p.paid } : p) });
+            };
+
+            const removeParticipant = (id) => {
+                if (!isAdmin || !window.confirm("Remover participante?")) return;
+                saveBolao({ ...bolao, participants: participants.filter(p => p.id !== id) });
+            };
+
+            return (
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                    <div className="flex justify-between items-center mb-6"><h3 className="text-xl font-bold text-gray-800">Lista de Participantes</h3></div>
+                    {isAdmin && (
+                        <form onSubmit={addParticipant} className="flex gap-2 mb-8 bg-gray-50 p-4 rounded-xl border border-gray-100">
+                            <input type="text" value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nome do participante..." className="flex-1 px-4 py-2 rounded-lg border border-gray-300 outline-none" />
+                            <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-semibold flex items-center gap-2"><i className="ph ph-plus"></i> Adicionar</button>
+                        </form>
+                    )}
+                    {participants.length === 0 ? (
+                        <div className="text-center py-10 text-gray-500"><i className="ph ph-users text-5xl mb-4 opacity-20"></i><p>Nenhum participante adicionado.</p></div>
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                            {participants.map(p => (
+                                <div key={p.id} className={`flex items-center justify-between p-4 rounded-xl border ${p.paid ? 'border-emerald-200 bg-emerald-50' : 'border-gray-200 bg-white'}`}>
+                                    <div className="flex items-center gap-3">
+                                        <button onClick={() => togglePaid(p.id)} disabled={!isAdmin} className={`text-2xl transition-colors ${!isAdmin ? 'cursor-default' : 'cursor-pointer'} ${p.paid ? 'text-emerald-500' : 'text-gray-300'}`}>
+                                            <i className={p.paid ? "ph-fill ph-check-circle" : "ph ph-circle"}></i>
+                                        </button>
+                                        <div>
+                                            <p className={`font-semibold ${p.paid ? 'text-emerald-900' : 'text-gray-800'}`}>{p.name}</p>
+                                            <p className="text-xs text-gray-500">{p.paid ? 'Pago' : 'Pendente'}</p>
+                                        </div>
+                                    </div>
+                                    {isAdmin && <button onClick={() => removeParticipant(p.id)} className="text-gray-400 hover:text-red-500"><i className="ph ph-trash text-lg"></i></button>}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        function GeneratorTab({ bolao, saveBolao, setActiveTab }) {
+            const [config, setConfig] = useState({ quantidade: 1, dezenas: 6, maxConsecutive: 3, maxPerDezena: 3 });
+            const [isGenerating, setIsGenerating] = useState(false);
+
+            const costPerTicket = getCombinations(config.dezenas) * TICKET_COST;
+            const totalCost = config.quantidade * costPerTicket;
+            const participants = bolao.participants || [];
+            const totalCollected = participants.filter(p => p.paid).length * (bolao.quotaValue || 0);
+            const totalExistingTicketsCost = (bolao.tickets || []).reduce((acc, t) => acc + (getCombinations(t.dezenas?.length || 6) * TICKET_COST), 0);
+            const isOverBudget = (totalExistingTicketsCost + totalCost) > totalCollected;
+
+            const getRandomNumber = () => Math.floor(Math.random() * 60) + 1;
+            const getDezenaGroup = (num) => Math.ceil(num / 10);
+            const checkConsecutive = (arr, max) => {
+                let cons = 1; let maxF = 1;
+                for (let i = 1; i < arr.length; i++) {
+                    if (arr[i] === arr[i-1] + 1) { cons++; if (cons > maxF) maxF = cons; } else { cons = 1; }
+                }
+                return maxF <= max;
+            };
+            const checkDezenas = (arr, max) => {
+                const counts = {};
+                for (const num of arr) {
+                    const g = getDezenaGroup(num);
+                    counts[g] = (counts[g] || 0) + 1;
+                    if (counts[g] > max) return false;
+                }
+                return true;
+            };
+
+            const generateSingleTicket = () => {
+                let attempts = 0;
+                while (attempts < 2000) {
+                    let ticket = new Set();
+                    while(ticket.size < config.dezenas) ticket.add(getRandomNumber());
+                    let arr = Array.from(ticket).sort((a,b) => a - b);
+                    if (checkConsecutive(arr, config.maxConsecutive) && checkDezenas(arr, config.maxPerDezena)) return { id: generateId(), dezenas: arr };
+                    attempts++;
+                }
+                let fallback = new Set();
+                while(fallback.size < config.dezenas) fallback.add(getRandomNumber());
+                return { id: generateId(), dezenas: Array.from(fallback).sort((a,b) => a-b) };
+            };
+
+            const handleGenerate = () => {
+                setIsGenerating(true);
+                setTimeout(() => {
+                    const newTickets = [];
+                    for (let i = 0; i < config.quantidade; i++) newTickets.push(generateSingleTicket());
+                    saveBolao({ ...bolao, tickets: [...(bolao.tickets || []), ...newTickets] });
+                    setIsGenerating(false);
+                    setActiveTab('tickets');
+                }, 500);
+            };
+
+            return (
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="space-y-6">
+                            <div><label className="flex justify-between text-sm font-semibold mb-2"><span>Quantidade</span><span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded">{config.quantidade}</span></label><input type="range" min="1" max="100" value={config.quantidade} onChange={e => setConfig({...config, quantidade: Number(e.target.value)})} className="w-full accent-emerald-600" /></div>
+                            <div><label className="flex justify-between text-sm font-semibold mb-2"><span>Dezenas por Cartão</span><span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded">{config.dezenas}</span></label><input type="range" min="6" max="20" value={config.dezenas} onChange={e => setConfig({...config, dezenas: Number(e.target.value)})} className="w-full accent-emerald-600" /></div>
+                            <div><label className="flex justify-between text-sm font-semibold mb-2"><span>Máx Consecutivos</span><span className="bg-gray-100 px-2 py-1 rounded">{config.maxConsecutive}</span></label><input type="range" min="2" max="15" value={config.maxConsecutive} onChange={e => setConfig({...config, maxConsecutive: Number(e.target.value)})} className="w-full accent-emerald-600" /></div>
+                            <div><label className="flex justify-between text-sm font-semibold mb-2"><span>Máx Mesma Linha</span><span className="bg-gray-100 px-2 py-1 rounded">{config.maxPerDezena}</span></label><input type="range" min="2" max="10" value={config.maxPerDezena} onChange={e => setConfig({...config, maxPerDezena: Number(e.target.value)})} className="w-full accent-emerald-600" /></div>
+                        </div>
+                        <div className="bg-gray-50 p-6 rounded-xl border border-gray-200 flex flex-col justify-between">
+                            <div>
+                                <h4 className="font-bold text-gray-800 mb-4">Resumo</h4>
+                                <div className="space-y-3 mb-6">
+                                    <div className="flex justify-between text-sm"><span className="text-gray-600">Dezenas:</span><span className="font-bold">{config.dezenas}</span></div>
+                                    <div className="flex justify-between text-sm"><span className="text-gray-600">Combinações:</span><span className="font-bold">{getCombinations(config.dezenas)}</span></div>
+                                    <div className="flex justify-between text-sm"><span className="text-gray-600">Custo Individual:</span><span className="font-bold">R$ {costPerTicket.toFixed(2)}</span></div>
+                                    <div className="border-t pt-3 flex justify-between"><span className="font-bold">Custo Total a Adicionar:</span><span className={`font-black text-lg ${isOverBudget ? 'text-red-600' : 'text-emerald-600'}`}>R$ {totalCost.toFixed(2)}</span></div>
+                                </div>
+                                {isOverBudget && (
+                                    <div className="flex items-start gap-2 text-amber-700 bg-amber-50 p-3 rounded-lg text-sm mb-4 border border-amber-200">
+                                        <i className="ph-fill ph-warning-circle text-lg"></i>
+                                        <p>Atenção: Este valor ultrapassa o saldo atual do bolão.</p>
+                                    </div>
+                                )}
+                            </div>
+                            <button onClick={handleGenerate} disabled={isGenerating} className={`w-full py-4 rounded-xl font-bold text-white flex items-center justify-center gap-2 transition-all ${isGenerating ? 'bg-emerald-400' : 'bg-emerald-600 hover:bg-emerald-700 shadow-md'}`}>
+                                <i className="ph ph-gear text-xl"></i> {isGenerating ? 'Gerando...' : 'Gerar e Adicionar'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function TicketsTab({ bolao, isAdmin, saveBolao }) {
+            const tickets = bolao.tickets || [];
+            const drawn = bolao.drawnNumbers || [];
+
+            const clearTickets = () => {
+                if (!window.confirm("Apagar TODOS os cartões gerados?")) return;
+                saveBolao({ ...bolao, tickets: [] });
+            };
+
+            const totalCost = tickets.reduce((acc, t) => acc + (getCombinations(t.dezenas?.length || 6) * TICKET_COST), 0);
+
+            if (tickets.length === 0) return (
+                <div className="bg-white p-12 text-center rounded-2xl shadow-sm border"><i className="ph ph-ticket text-6xl text-gray-300 mb-4"></i><h3 className="text-xl font-bold text-gray-700">Nenhum cartão gerado</h3></div>
+            );
+
+            return (
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                    <div className="flex flex-col sm:flex-row justify-between items-center mb-6 no-print gap-4">
+                        <div><h3 className="text-xl font-bold">Cartões do Bolão</h3><p className="text-sm text-gray-500">{tickets.length} bilhetes (Custo: R$ {totalCost.toFixed(2)})</p></div>
+                        <div className="flex gap-2">
+                            {isAdmin && <button onClick={clearTickets} className="text-gray-500 hover:text-red-500 px-4 py-2 rounded-lg border">Apagar Tudo</button>}
+                            <button onClick={() => window.print()} className="bg-gray-800 text-white px-6 py-2 rounded-lg font-semibold flex items-center gap-2"><i className="ph ph-printer text-lg"></i> Imprimir</button>
+                        </div>
+                    </div>
+                    <div className="hidden print-only mb-8 text-center border-b pb-4">
+                        <h1 className="text-2xl font-black">BOLÃO MEGA SENA: {bolao.name}</h1>
+                        <p className="text-gray-600">Total de Bilhetes: {tickets.length} | Custo dos Jogos: R$ {totalCost.toFixed(2)}</p>
+                    </div>
+                    <div className="ticket-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {tickets.map((ticket, index) => {
+                            const hits = (ticket.dezenas || []).filter(n => drawn.includes(n)).length;
+                            let badge = null, highlightClass = "border-gray-200 bg-gray-50";
+                            if (drawn.length > 0) {
+                                if (hits >= 6) { highlightClass = "border-emerald-500 bg-emerald-100"; badge = "SENA!"; }
+                                else if (hits === 5) { highlightClass = "border-blue-500 bg-blue-50"; badge = "QUINA!"; }
+                                else if (hits === 4) { highlightClass = "border-yellow-500 bg-yellow-50"; badge = "QUADRA!"; }
+                                else { highlightClass = "border-gray-200 bg-white opacity-60"; }
+                            }
+                            return (
+                                <div key={ticket.id || index} className={`ticket-card relative rounded-xl border p-4 shadow-sm flex flex-col justify-between h-full ${highlightClass}`}>
+                                    <div className="flex justify-between items-center mb-3">
+                                        <div><span className="text-xs font-bold text-gray-400 block">Jogo {String(index + 1).padStart(3, '0')}</span><span className="text-[10px] text-gray-400">{ticket.dezenas?.length || 0} dezenas</span></div>
+                                        {badge && <span className="text-xs font-black px-2 py-1 rounded bg-white shadow-sm" style={{ color: hits>=6?'#10b981':hits===5?'#3b82f6':'#eab308' }}>{badge}</span>}
+                                    </div>
+                                    <div className="flex justify-center gap-2 flex-wrap">
+                                        {(ticket.dezenas || []).map((num, i) => (
+                                            <div key={i} className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm border-2 ${drawn.includes(num) ? 'bg-emerald-500 border-emerald-600 text-white transform scale-110 shadow-md' : 'bg-white border-gray-300 text-gray-700'}`}>
+                                                {String(num).padStart(2, '0')}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        }
+
+        function ResultsTab({ bolao, isAdmin, saveBolao }) {
+            const [inputStr, setInputStr] = useState('');
+            const drawnNumbers = bolao.drawnNumbers || [];
+            const tickets = bolao.tickets || [];
+
+            useEffect(() => { if (drawnNumbers.length > 0) setInputStr(drawnNumbers.join(' - ')); }, [drawnNumbers]);
+
+            const handleSaveResult = () => {
+                const numbers = inputStr.split(/[\s,-]+/).map(n => parseInt(n.trim(), 10)).filter(n => !isNaN(n) && n >= 1 && n <= 60);
+                const unique = [...new Set(numbers)].sort((a,b) => a-b);
+                if (unique.length > 0 && unique.length !== 6) return alert("Insira exatamente 6 números.");
+                saveBolao({ ...bolao, drawnNumbers: unique });
+            };
+
+            let senaCount = 0, quinaCount = 0, quadraCount = 0;
+            if (drawnNumbers.length === 6 && tickets.length > 0) {
+                tickets.forEach(ticket => {
+                    const hits = (ticket.dezenas || []).filter(n => drawnNumbers.includes(n)).length;
+                    if (hits >= 6) senaCount++;
+                    if (hits === 5) quinaCount++;
+                    if (hits === 4) quadraCount++;
+                });
+            }
+
+            return (
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                    <div className="max-w-2xl mx-auto">
+                        <div className="text-center mb-8"><i className="ph-fill ph-trophy text-5xl text-yellow-400 mb-4"></i><h3 className="text-2xl font-black">Conferência Automática</h3></div>
+                        {isAdmin ? (
+                            <div className="bg-gray-50 p-6 rounded-xl border border-gray-200 mb-8">
+                                <label className="block text-sm font-bold text-gray-700 mb-2">Números Sorteados</label>
+                                <input type="text" value={inputStr} onChange={(e) => setInputStr(e.target.value)} placeholder="Ex: 05 - 12 - 33 - 41 - 50 - 59" className="w-full px-4 py-3 rounded-lg border font-mono text-center text-lg outline-none" />
+                                <div className="flex gap-2 mt-4">
+                                    <button onClick={handleSaveResult} className="flex-1 bg-emerald-600 text-white py-3 rounded-lg font-bold">Conferir Jogos</button>
+                                    {drawnNumbers.length > 0 && <button onClick={() => {saveBolao({...bolao, drawnNumbers:[]}); setInputStr('')}} className="px-6 bg-gray-200 py-3 rounded-lg font-bold">Limpar</button>}
+                                </div>
+                            </div>
+                        ) : drawnNumbers.length > 0 ? (
+                            <div className="text-center mb-8 flex justify-center gap-3">
+                                {drawnNumbers.map((n, i) => <div key={i} className="w-12 h-12 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-xl">{String(n).padStart(2, '0')}</div>)}
+                            </div>
+                        ) : <div className="text-center p-8 bg-gray-50 rounded-xl border mb-8"><p className="text-gray-500">Aguardando resultado do administrador.</p></div>}
+
+                        {drawnNumbers.length === 6 && tickets.length > 0 && (
+                            <div className="space-y-4">
+                                <div className={`p-4 rounded-xl border-2 flex justify-between items-center ${senaCount > 0 ? 'border-emerald-500 bg-emerald-50' : 'border-gray-100 bg-gray-50'}`}>
+                                    <div className="flex items-center gap-4"><div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-xl ${senaCount > 0 ? 'bg-emerald-500 text-white' : 'bg-gray-200 text-gray-400'}`}>6</div><div><h5 className="font-bold text-lg">Sena</h5><p className="text-sm">Bilhetes premiados</p></div></div>
+                                    <div className="text-3xl font-black">{senaCount}</div>
+                                </div>
+                                <div className={`p-4 rounded-xl border-2 flex justify-between items-center ${quinaCount > 0 ? 'border-blue-500 bg-blue-50' : 'border-gray-100 bg-gray-50'}`}>
+                                    <div className="flex items-center gap-4"><div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-xl ${quinaCount > 0 ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-400'}`}>5</div><div><h5 className="font-bold text-lg">Quina</h5><p className="text-sm">Bilhetes premiados</p></div></div>
+                                    <div className="text-3xl font-black">{quinaCount}</div>
+                                </div>
+                                <div className={`p-4 rounded-xl border-2 flex justify-between items-center ${quadraCount > 0 ? 'border-yellow-500 bg-yellow-50' : 'border-gray-100 bg-gray-50'}`}>
+                                    <div className="flex items-center gap-4"><div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-xl ${quadraCount > 0 ? 'bg-yellow-500 text-white' : 'bg-gray-200 text-gray-400'}`}>4</div><div><h5 className="font-bold text-lg">Quadra</h5><p className="text-sm">Bilhetes premiados</p></div></div>
+                                    <div className="text-3xl font-black">{quadraCount}</div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
 </html>
