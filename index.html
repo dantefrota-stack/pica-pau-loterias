@@ -209,18 +209,18 @@
 
                     <header className="bg-gradient-to-r from-emerald-700 to-green-600 text-white shadow-md no-print">
                         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-                            <div className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
-                                <div className="bg-white p-2 rounded-full flex items-center justify-center">
+                            <div className="flex items-center gap-4 cursor-pointer" onClick={goHome}>
+                                <div className="flex items-center justify-center">
                                     <img 
                                         src="./icons8-woody-woodpecker-480.png" 
                                         onError={(e) => { e.currentTarget.src = "https://api.iconify.design/fluent-emoji/woodpecker.svg"; }}
                                         alt="Pica Pau Logo" 
-                                        className="w-8 h-8 object-contain" 
+                                        className="w-24 h-24 object-contain drop-shadow-lg hover:scale-105 transition-transform duration-200" 
                                     />
                                 </div>
                                 <div>
-                                    <h1 className="text-2xl font-black tracking-tight leading-none">PICA PAU</h1>
-                                    <span className="text-emerald-200 text-xs font-semibold uppercase tracking-wider">Loterias & Bolões</span>
+                                    <h1 className="text-3xl font-black tracking-tight leading-none mb-1">PICA PAU</h1>
+                                    <span className="text-emerald-200 text-sm font-semibold uppercase tracking-wider">Loterias & Bolões</span>
                                 </div>
                             </div>
                             <div className="flex items-center gap-4 text-sm">
